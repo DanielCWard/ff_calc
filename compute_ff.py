@@ -15,21 +15,76 @@ WHITE = 1000
 BLACK = 0
 
 
-#http://nipy.org/nibabel/nibabel_images.html
-#Returns voxel in terms of dx, dy, dz and the time (ms) between slices of a nii.gz image
-#Slice time will be omitted if the nii.gz image was computer (rather than machine/scanner) generated
-#	[dx, dy, dz, sliceTime]
-def get_nii_gz_voxel_vol(img):
-	#Get header information
-	header = img.header
-	return header.get_zooms()
+#def main function which gets infor form the dicom file
+#and calculates the fat fratcions
+def process_file(niFileName, dicomDirPath):
+	dicomPath = get_dicom_from_nii(filename, dicomDirPath)
+	dicomList = sort_dicom_seq(dicomPath)
+	dicomData = pydi.read_file(dicomList[0])
+	voxVol = get_dicom_voxel_size(dicomData)
+	voxArr = get_im_as_array(dicomData)
+	dimen = get_dimensions(voxArr)
+	height = dimen[1]
+	width = dimen[0]
+	slices = get_segmented_vox(dicomList, segment, width, height)
+	pd = get_patient_data(dicomData)
+	ff = calc_fat_vol(slices, voxVol, lwrB, uprB, lwrW, uprW, width, height)
+	wr.writerow([ff[0], ff[1], ff[2], ff[3], ff[4], ff[5], ff[6], ff[7], ff[8], ff[9], ff[10], ff[11], ff[12], ff[13], ff[14], pd[0], pd[1], pd[2], pd[3], pd[4], pd[5], pd[6], pd[7], pd[8])
 
-#Returns the output data shape of the .nii.gz image
-#Slice time will be omitted if the nii.gz image was computer (rather than machine/scanner) generated
-#       [x, y, z, sliceTime]
-def get_nii_gz_shape(img):
-	header = img.header
-	return header.get_data_shape()
+
+#does most of the processing
+def main(niFilePath, dicomDirPath, csvPath):
+	i = 0
+	name = ['PSCID', 'FF %', 'FF Vol cm^3', 'FF abs Min', 'FF avg Min', 'FF abs Max', 'FF avg Max', 'BAT %', 'BAT Vol cm^3',  'BAT abs Min', 'BAT avg Min', 'BAT abs Max', 'BAT avg Max', 'WAT %', 'WAT Vol cm^3', 'WAT abs Min', 'WAT avg Min', 'WAT abs Max', 'WAT avg Max', "Patient Size", "Patient Weight", "Patient Sex", "Age", "DOB", "Study ID", "Study Time", "Magnetic Field Strength"]
+	csvFile = open(csvPath, 'wb')
+	wr = csv.writer(csvFile)
+	wr.writerow(name)
+	if singlePatient == True:
+		process_file(niFilePath, dicomDirPath)
+		return
+	for filename in glob.glob(niFilePath):
+		process_file(fileName, dicomDirPath)
+	
+#Goes through and selects all the files for processing
+def get_dicom_from_nii(niFileName, dicomDirPath):
+	patientNum = niFileName.split('/')[-1] #gets the 
+	patientDicomPath = get_patient_folder(dicomDirPath, patientNum)
+	return patientDicomPath
+
+#gets the paitient data and scan data from the header from the dicom file
+#erturns PID, weight, height, DOB, Age, Sex, Study ID, Study time, study data
+#and magnetic field strength
+def get_patient_data(data):
+	patientData = []
+	patientData.append(getattr(data, "PatientID", '')
+	patientData.append(getattr(data, "PatientSize", '')
+	patientData.append(getattr(data, "PatientWeight", '')
+	patientData.append(getattr(data, "PatientSex", '')
+	patientData.append(getattr(data, "PatientAge", '')
+	patientData.append(getattr(data, "PatientBirthDate", '')
+	patientData.append(getattr(data, "StudyID", '')
+	patientData.append(getattr(data, "StudyDate", '')
+	patientData.append(getattr(data, "MagneticFieldStrength", '')
+	return patientData
+	
+#returns a particular directory for a patient number
+#based on the segementation file name
+def get_patient_folder(dicomDirPath, patientNum):
+	path = None
+	# Find folder of patient based on number
+	for dirpath in glob.glob(dicomDirPath):
+		if patientNum in dirPath:
+			path = dicomDirPath.append(dirpath)	
+	# Find relevent MRI folder in patient folder
+	for i in glob.glob(path):
+		if "MRI_RESEARCH" in dirpath or "MRI_BRAIN" in i:
+			path = dicomDirPath.append(i)
+	#Find specific BAT MRI folder
+	for f in glob.glob(path):
+		if "AX" in f and "SCAPULA" in f:
+			if "FP" in f or "FF" in f:
+				return path.append(f)
+		 
 
 #Takes a nii.gz img array and slice number(z coord) and returns the pixel array for that slice
 def get_slice_arr(img, width, height, sliceNum):
@@ -55,10 +110,6 @@ def get_dicom_voxel_size(img):
 def get_im_as_array(img):
 	voxArr = img.pixel_array
 	return voxArr
-
-#http://nipy.org/nibabel/nibabel_images.html
-#def get_nigz_metadata():
-
 
 #Returns tuple (width, height) of the DICOM file
 def get_dimensions(voxArr):
@@ -96,7 +147,6 @@ def get_segmented_vox(dicomList, segment, width, height):
 				
 def mask_by_seg(segVoxArr, voxArr, width, height):
 	segmented = False
-        #view_pix(voxArr)
 	for i in range(width - 1):
 		for j in range(height - 1):
 			if segVoxArr[j][i] == BLACK:
@@ -105,8 +155,6 @@ def mask_by_seg(segVoxArr, voxArr, width, height):
 				segmented = True
 
         if segmented == True:
-	#	view_pix(segVoxArr)
-       	#	view_pix(voxArr)
 		return voxArr
 	else:
 		return None
@@ -122,12 +170,17 @@ def rm_voxel_by_range(slices, width, height, lwrBound, uprBound):
                                 if image[j][i] >= lwrBound and image[j][i] <= uprBound:
 					image[j][i] = BLACK
 	return slices
+
 #Calculates the number of voxels and the average voxel value
 #within an array of slices which are within the range
 #The average will be normalised to between 0 and 1 by divind by max voxel value: 1000
-def count_voxels(slices, width, height, lwrBound, uprBound):
+def count_voxels(slices, width, height, lwrBound, uprBound, voxVol):
 	count = 0
 	value = 0
+	minVals = []
+	maxVals = []
+	curMin = 1000
+	curMax = 0
 	#print lwrBound, uprBound, "bounds"
 	for image in slices:
 		for i in range(width - 1):
@@ -135,37 +188,47 @@ def count_voxels(slices, width, height, lwrBound, uprBound):
 				if image[j][i] >= lwrBound and image[j][i] <= uprBound:
 					count += 1
 					value += image[j][i]
+					if image[j][i] < curMin:
+						curMin = image[j][i]
+					if image[j][1] > curMax:
+						curMax = image[j][i]
+		minVals.append(curMin)
+		maxVals.append(curMax)
+	minVals.sort()
+	maxVals.sort()
+	minVal = minVals[0]
+	maxVal = maxVals[-1]
+	avgMin = sum(minVals) / float(len(minVals))
+	avgMax = sum(maxals) / float(len(maxVals))
 	average = (value / count) * 1.000
 	average = average / 1000
+	vol = vox_to_cm(count, voxVol)
 	#print count
-	return (count, average)
+	return [average, vol, minVal, avgMin, maxVal, avgMax]
 
 #Computes the real volume, from voxels to millimeters
 #Dimen is a list of [x, y, z] size of voxel
 def vox_to_cm(voxCount, dimen):
-	#Maybe check len(dimen) == 3
 	voxVol = dimen[0] * dimen[1] * dimen[2]
 	return voxCount * voxVol * 0.001
 
 #Computes volumes of fat fraction, BAT and WAT
 #Returns a list [(FFave, FFVol), (BATave, BATVol), (WATave, WATVol)]
-def calc_fat_vol(slices, voxVol, BATlwr, BATupr, WATlwr, WATupr):
-	#Get dimensions of each slice
-	dimen = get_dimensions(slices[0])
-	width = dimen[0]
-	height = dimen[1]
+def calc_fat_vol(slices, voxVol, BATlwr, BATupr, WATlwr, WATupr, width, height):
 	#Calc volumes of all segmented fat
-	ff = count_voxels(slices, width, height, (BATlwr * 10), (WATupr * 10))
-	ffVol = vox_to_cm(ff[0], voxVol)
+	ff = count_voxels(slices, width, height, (BATlwr * 10), (WATupr * 10), voxVol)
 	#Mask image for WAT and repeat calc
-	wat = count_voxels(slices, width, height, (WATlwr * 10), (WATupr * 10))
-	watVol = vox_to_cm(wat[0], voxVol)
+	wat = count_voxels(slices, width, height, (WATlwr * 10), (WATupr * 10), voxVol)
 	#Mask and repeat for BAT
-	bat = count_voxels(slices, width, height, (BATlwr * 10), (BATupr * 10))
-        batVol = vox_to_cm(bat[0], voxVol)
-	return [(ff[1], ffVol),  (bat[1], batVol), (wat[1], watVol)]
-
-
+	bat = count_voxels(slices, width, height, (BATlwr * 10), (BATupr * 10), voxVol)
+	ffRet = []
+	for i in ff:
+		ffRet.append(i)
+	for i in bat:
+		ffRet.append(i)
+	for i in wat:
+		ffRet.append(i)
+	return ffRet
 
 #open the needed directory
 def get_dicom_path():
@@ -206,13 +269,19 @@ dimen = get_dimensions(voxArr)
 height = dimen[1]
 width = dimen[0]
 
-name = ['FF %', 'FF Vol cm^3', 'BAT %', 'BAT Vol cm^3','WAT %', 'WAT Vol cm^3']
+
+name = ['PSCID', 'FF %', 'FF Vol cm^3', 'FF abs Min', 'FF avg Min', 'FF abs Max', 'FF avg Max', 'BAT %', 'BAT Vol cm^3',  'BAT abs Min', 'BAT avg Min', 'BAT abs Max', 'BAT avg Max', 'WAT %', 'WAT Vol cm^3', 'WAT abs Min', 'WAT avg Min', 'WAT abs Max', 'WAT avg Max', "Patient Size", "Patient Weight", "Patient Sex", "Age", "DOB", "Study ID", "Study Time", "Magnetic Field Strength"]
 csvFile = open(dicomPath + "Fat_Fractions.csv", 'wb')
 wr = csv.writer(csvFile)
+#NEED TO WRITE THE FIRST ROW AS THE BAT AND WAT AND FF VALS!
 wr.writerow(name)
 
 slices = get_segmented_vox(dicomList, segment, width, height)
 master = Tk()
+#Load either a single patient or choose all paitients
+Button(master, text='Choose Single Patient Folder', command=load_single_patient).pack()
+Button(master, text='Load all Patients', command=load_all_patients).pack()
+#Add the choices for different BAT values
 labelBat = Label(master, text="BAT Lower")
 labelBat.pack()
 lwrBat = Scale(master, from_=0, to=100, length=600, tickinterval=5, orient=HORIZONTAL)
